@@ -12,25 +12,19 @@ import (
 	"github.com/seydx/cameraui.com/cloud-client/pkg/log"
 )
 
-// Client wraps a NATS connection and tracks the handlers registered against it.
-// One Client is created per process by Init and exposed via GetClient.
 type Client struct {
 	conn     *nats.Conn
 	handlers map[string]nats.MsgHandler
 }
 
-// Response is the standard envelope used for request/reply traffic over NATS.
 type Response struct {
 	Success bool   `msgpack:"success"`
 	Data    any    `msgpack:"data,omitempty"`
 	Error   string `msgpack:"error,omitempty"`
 }
 
-// GlobalClient is the process-wide NATS client initialised by Init.
 var GlobalClient *Client
 
-// Init connects to the camera.ui server and stores the resulting client in
-// GlobalClient. Calls log.Fatal if the connection cannot be established.
 func Init() {
 	client, err := connect()
 	if err != nil {

@@ -2,6 +2,7 @@ package tunnel
 
 import (
 	"bufio"
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"crypto/tls"
@@ -10,9 +11,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/rand"
 	"net"
-	"net/http"
-	"net/http/httputil"
 	"net/url"
 	"strings"
 	"sync"
@@ -23,37 +23,29 @@ import (
 	"github.com/nats-io/nats.go"
 
 	"github.com/seydx/cameraui.com/cloud-client/internal/app"
-	"github.com/seydx/cameraui.com/cloud-client/internal/packer"
 	"github.com/seydx/cameraui.com/cloud-client/internal/proxy"
 	"github.com/seydx/cameraui.com/cloud-client/pkg/log"
 )
 
-// TunnelConnection owns one outbound TLS+yamux session to the cloud tunnel
-// endpoint. Lifecycle: NewTunnelConnection → Connect → (streams handled in
-// background) → Close. The OnConnected / OnDisconnected / OnError callbacks
-// fire from the goroutine that observes the event; callers must keep them
-// thread-safe.
 type TunnelConnection struct {
 	ServerID     string
 	ServerSecret string
-	SessionID    string
-	Challenge    string
 	Endpoint     string
 	LocalPort    string
 
+	SessionID   string
 	conn        net.Conn
 	session     *yamux.Session
 	connected   atomic.Bool
 	ConnectedAt time.Time
 	mu          sync.Mutex
-
-	OnConnected    func()
-	OnDisconnected func(reason string)
-	OnError        func(error)
 }
 
-// AuthFrame is the JSON envelope sent over the freshly opened TLS connection
-// to authenticate with the tunnel server.
+type NonceFrame struct {
+	Nonce     string `json:"nonce"`
+	SessionID string `json:"session_id"`
+}
+
 type AuthFrame struct {
 	Type      string `json:"type"`
 	ServerID  string `json:"server_id"`
@@ -62,151 +54,112 @@ type AuthFrame struct {
 	Timestamp int64  `json:"timestamp"`
 }
 
-// TunnelRequest is the inbound NATS message that triggers a new tunnel.
-type TunnelRequest struct {
-	ServerID       string `msgpack:"serverId"`
-	ServerSecret   string `msgpack:"serverSecret"`
-	SessionID      string `msgpack:"sessionId"`
-	Challenge      string `msgpack:"challenge"`
-	TunnelEndpoint string `msgpack:"tunnelEndpoint"`
-	Timestamp      string `msgpack:"timestamp"`
-}
+var ErrAuthFailed = errors.New("authentication failed")
 
-var (
-	// currentTunnel is the active tunnel (if any). Always go through
-	// swapCurrentTunnel / getCurrentTunnel — the NATS handlers run on
-	// independent goroutines per subject, so direct access races.
-	currentTunnel   *TunnelConnection
-	currentTunnelMu sync.Mutex
-
-	ConnectSubject    = "cloud.tunnel.connect"
-	DisconnectSubject = "cloud.tunnel.disconnect"
-	StatusSubject     = "cloud.tunnel.status"
+const (
+	StatusSubject         = "cloud.agent.status"
+	ShutdownSubject       = "cloud.agent.shutdown"
+	ForceReconnectSubject = "cloud.agent.force-reconnect"
+	AuthFailedSubject     = "cloud.agent.auth-failed"
+	ConnectedSubject      = "cloud.agent.connected"
 )
 
-// Init registers the NATS handlers that drive the tunnel lifecycle
-// (connect / disconnect / status). Calls log.Fatal if registration fails.
+var (
+	currentTunnel    *TunnelConnection
+	currentTunnelMu  sync.Mutex
+	loopCancel       context.CancelFunc
+	forceReconnectCh = make(chan struct{}, 1)
+)
+
 func Init() {
 	proxyClient := proxy.GetClient()
 	if proxyClient == nil {
 		log.Logger.Fatal().Msg("Proxy client is not initialized")
 	}
 
-	if err := proxyClient.RegisterHandler(ConnectSubject, func(msg *nats.Msg) {
-		var req TunnelRequest
-
-		if err := packer.UnpackMessage(msg.Data, &req); err != nil {
-			respondError(proxyClient, msg, err.Error())
-			return
-		}
-
-		if err := handleConnect(&req); err != nil {
-			respondError(proxyClient, msg, err.Error())
-		} else {
-			respondSuccess(proxyClient, msg, map[string]any{
-				"status": "connected",
-			})
-		}
-	}); err != nil {
-		log.Logger.Fatal().Err(err).Str("subject", ConnectSubject).Msg("Failed to register handler")
-	}
-
-	if err := proxyClient.RegisterHandler(DisconnectSubject, func(msg *nats.Msg) {
-		if old := swapCurrentTunnel(nil); old != nil {
-			old.Close()
-		}
-
-		respondSuccess(proxyClient, msg, map[string]any{
-			"status": "disconnected",
-		})
-	}); err != nil {
-		log.Logger.Fatal().Err(err).Str("subject", DisconnectSubject).Msg("Failed to register handler")
-	}
-
-	if err := proxyClient.RegisterHandler(StatusSubject, func(msg *nats.Msg) {
-		tunnel := getCurrentTunnel()
-		if tunnel == nil || !tunnel.IsConnected() {
-			respondSuccess(proxyClient, msg, map[string]any{
-				"status": "disconnected",
-			})
-			return
-		}
-
-		respondSuccess(proxyClient, msg, tunnel.StatusSnapshot())
-	}); err != nil {
+	if err := proxyClient.RegisterHandler(StatusSubject, handleStatus); err != nil {
 		log.Logger.Fatal().Err(err).Str("subject", StatusSubject).Msg("Failed to register handler")
 	}
+
+	if err := proxyClient.RegisterHandler(ShutdownSubject, handleShutdown); err != nil {
+		log.Logger.Fatal().Err(err).Str("subject", ShutdownSubject).Msg("Failed to register handler")
+	}
+
+	if err := proxyClient.RegisterHandler(ForceReconnectSubject, handleForceReconnect); err != nil {
+		log.Logger.Fatal().Err(err).Str("subject", ForceReconnectSubject).Msg("Failed to register handler")
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	loopCancel = cancel
+	go connectLoop(ctx)
 }
 
-// NewTunnelConnection builds an unconnected TunnelConnection populated from
-// the request fields plus the process-wide local port.
-func NewTunnelConnection(serverID, serverSecret, sessionID, challenge, endpoint string) *TunnelConnection {
+func NewTunnelConnection() *TunnelConnection {
 	cfg := app.GetConfig()
-
 	return &TunnelConnection{
-		ServerID:     serverID,
-		ServerSecret: serverSecret,
-		SessionID:    sessionID,
-		Challenge:    challenge,
-		Endpoint:     endpoint,
+		ServerID:     cfg.ServerID,
+		ServerSecret: cfg.ServerSecret,
+		Endpoint:     cfg.CloudEndpoint,
 		LocalPort:    cfg.LocalPort,
 	}
 }
 
-// Connect dials the tunnel endpoint over TLS, authenticates with an HMAC-signed
-// frame, and starts a yamux client session. The session's accept loop runs in a
-// background goroutine until disconnect.
 func (t *TunnelConnection) Connect() error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	var host, port, address string
+	host, address := resolveAddress(t.Endpoint)
 
-	if u, err := url.Parse(t.Endpoint); err == nil && u.Scheme != "" {
-		host = u.Hostname()
-		port = u.Port()
-		if port == "" {
-			if u.Scheme == "https" {
-				port = "443"
-			} else {
-				port = "80"
-			}
-		}
-		address = net.JoinHostPort(host, port)
-	} else {
-		var err error
-		host, _, err = net.SplitHostPort(t.Endpoint)
-		if err != nil {
-			// No port specified, assume t.Endpoint is just a hostname.
-			host = t.Endpoint
-			address = net.JoinHostPort(host, "9092")
-		} else {
-			address = t.Endpoint
-		}
+	tlsConfig := &tls.Config{
+		ServerName: host,
+		MinVersion: tls.VersionTLS12,
 	}
 
-	conn, err := tls.Dial("tcp", address, &tls.Config{
-		ServerName:         host,
-		MinVersion:         tls.VersionTLS12,
-		InsecureSkipVerify: true,
-	})
+	if app.GetConfig().IsDevelopment() {
+		tlsConfig.InsecureSkipVerify = true
+	}
+
+	conn, err := tls.Dial("tcp", address, tlsConfig)
 	if err != nil {
-		return fmt.Errorf("failed to connect to %s: %w", address, err)
+		return fmt.Errorf("failed to dial %s: %w", address, err)
 	}
 
 	t.conn = conn
 
-	authFrame := &AuthFrame{
-		Type:      "AUTH",
-		ServerID:  t.ServerID,
-		SessionID: t.SessionID,
-		Timestamp: time.Now().Unix(),
+	reader := bufio.NewReader(conn)
+
+	// Cloud sends nonce first.
+	nonceLine, err := reader.ReadString('\n')
+	if err != nil {
+		closeConnLog(conn, "nonce read failure")
+		return fmt.Errorf("failed to read nonce: %w", err)
 	}
 
-	payload := fmt.Sprintf("%s:%s:%d", t.Challenge, t.SessionID, authFrame.Timestamp)
-	authFrame.Signature = t.calculateHMAC(payload)
+	var nf NonceFrame
+	if err := json.Unmarshal([]byte(strings.TrimSpace(nonceLine)), &nf); err != nil {
+		closeConnLog(conn, "nonce decode failure")
+		return fmt.Errorf("failed to decode nonce: %w", err)
+	}
+	if nf.Nonce == "" || nf.SessionID == "" {
+		closeConnLog(conn, "nonce empty")
+		return errors.New("cloud sent empty nonce frame")
+	}
 
-	authJSON, err := json.Marshal(authFrame)
+	t.SessionID = nf.SessionID
+
+	// Sign nonce:sessionID:timestamp and respond.
+	timestamp := time.Now().Unix()
+	payload := fmt.Sprintf("%s:%s:%d", nf.Nonce, nf.SessionID, timestamp)
+
+	auth := AuthFrame{
+		Type:      "AUTH",
+		ServerID:  t.ServerID,
+		SessionID: nf.SessionID,
+		Timestamp: timestamp,
+		Signature: t.calculateHMAC(payload),
+	}
+
+	authJSON, err := json.Marshal(auth)
 	if err != nil {
 		closeConnLog(conn, "auth marshal failure")
 		return fmt.Errorf("failed to marshal auth frame: %w", err)
@@ -217,16 +170,18 @@ func (t *TunnelConnection) Connect() error {
 		return fmt.Errorf("failed to send auth frame: %w", err)
 	}
 
-	reader := bufio.NewReader(conn)
 	response, err := reader.ReadString('\n')
 	if err != nil {
-		closeConnLog(conn, "auth read failure")
+		closeConnLog(conn, "auth response read failure")
 		return fmt.Errorf("failed to read auth response: %w", err)
 	}
 
 	response = strings.TrimSpace(response)
 	if response != "OK" {
 		closeConnLog(conn, "auth rejected")
+		if strings.HasPrefix(response, "AUTH_FAIL") {
+			return fmt.Errorf("%w: %s", ErrAuthFailed, response)
+		}
 		return fmt.Errorf("authentication failed: %s", response)
 	}
 
@@ -247,21 +202,22 @@ func (t *TunnelConnection) Connect() error {
 	t.connected.Store(true)
 	t.ConnectedAt = time.Now()
 
-	// Pass the session as parameter — the goroutine keeps its own local
-	// reference, immune to a concurrent disconnect() that nils t.session.
-	// Reading the field directly inside the loop is racy and crashes with a
-	// nil-deref when the connection is torn down between iterations.
 	go t.acceptStreams(session)
-
-	if t.OnConnected != nil {
-		t.OnConnected()
-	}
 
 	return nil
 }
 
-// Close tears down the tunnel and fires OnDisconnected with reason
-// "closed by user".
+func (t *TunnelConnection) Done() <-chan struct{} {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.session == nil {
+		closed := make(chan struct{})
+		close(closed)
+		return closed
+	}
+	return t.session.CloseChan()
+}
+
 func (t *TunnelConnection) Close() {
 	t.disconnect("closed by user")
 }
@@ -270,9 +226,6 @@ func (t *TunnelConnection) IsConnected() bool {
 	return t.connected.Load()
 }
 
-// StatusSnapshot returns the connected status payload read under the mutex,
-// so a concurrent disconnect() can't nil t.session between the connected check
-// and the NumStreams() call.
 func (t *TunnelConnection) StatusSnapshot() map[string]any {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -289,235 +242,49 @@ func (t *TunnelConnection) StatusSnapshot() map[string]any {
 	return result
 }
 
-// respondError logs the publish failure — there's no useful recovery from
-// inside a NATS handler if the response can't be sent (the requester will
-// time out anyway), but a silent drop hides bugs.
-func respondError(client *proxy.Client, msg *nats.Msg, message string) {
-	if err := client.RespondError(msg, message); err != nil {
-		log.Logger.Error().Err(err).Str("subject", msg.Subject).Msg("Failed to send error response")
-	}
-}
-
-func respondSuccess(client *proxy.Client, msg *nats.Msg, data any) {
-	if err := client.RespondSuccess(msg, data); err != nil {
-		log.Logger.Error().Err(err).Str("subject", msg.Subject).Msg("Failed to send success response")
-	}
-}
-
-func handleConnect(req *TunnelRequest) error {
-	log.Logger.Debug().Msg("New tunnel connection request")
-
-	newTunnel := NewTunnelConnection(
-		req.ServerID,
-		req.ServerSecret,
-		req.SessionID,
-		req.Challenge,
-		req.TunnelEndpoint,
-	)
-
-	newTunnel.OnConnected = func() {
-		log.Logger.Debug().Msg("Tunnel connection established")
-	}
-
-	newTunnel.OnDisconnected = func(reason string) {
-		log.Logger.Debug().Str("reason", reason).Msg("Tunnel connection closed")
-	}
-
-	newTunnel.OnError = func(err error) {
-		log.Logger.Error().Err(err).Msg("Tunnel connection error")
-	}
-
-	// Install the new tunnel atomically before closing the old one — a status
-	// request that races in between will see the new tunnel (still connecting,
-	// IsConnected = false) rather than a stale closed pointer.
-	if old := swapCurrentTunnel(newTunnel); old != nil {
-		old.Close()
-	}
-
-	return newTunnel.Connect()
-}
-
-func swapCurrentTunnel(next *TunnelConnection) (previous *TunnelConnection) {
-	currentTunnelMu.Lock()
-	defer currentTunnelMu.Unlock()
-	previous = currentTunnel
-	currentTunnel = next
-	return previous
-}
-
-func getCurrentTunnel() *TunnelConnection {
-	currentTunnelMu.Lock()
-	defer currentTunnelMu.Unlock()
-	return currentTunnel
-}
-
 func (t *TunnelConnection) acceptStreams(session *yamux.Session) {
 	defer t.disconnect("session closed")
 
 	for {
 		stream, err := session.Accept()
 		if err != nil {
-			if t.connected.Load() && t.OnError != nil {
-				t.OnError(fmt.Errorf("failed to accept stream: %w", err))
-			}
 			return
 		}
-
 		go t.handleStream(stream)
 	}
 }
 
 func (t *TunnelConnection) handleStream(stream net.Conn) {
-	defer t.closeStream(stream, "handleStream done")
+	defer closeQuiet(stream)
 
-	reader := bufio.NewReader(stream)
-	req, err := http.ReadRequest(reader)
-	if err != nil {
-		if t.OnError != nil {
-			t.OnError(fmt.Errorf("failed to read request from stream: %w", err))
-		}
-		return
-	}
-
-	if isWebSocketRequest(req) {
-		t.handleWebSocketStream(stream, req, reader)
-		return
-	}
-
-	target, err := url.Parse(fmt.Sprintf("https://localhost:%s", t.LocalPort))
-	if err != nil {
-		if t.OnError != nil {
-			t.OnError(fmt.Errorf("failed to parse target URL: %w", err))
-		}
-		return
-	}
-
-	proxy := httputil.NewSingleHostReverseProxy(target)
-
-	// Backend uses self-signed certs — skip verification on the proxy hop.
-	proxy.Transport = &http.Transport{
-		TLSClientConfig: &tls.Config{
-			InsecureSkipVerify: true,
-		},
-	}
-
-	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
-		if t.OnError != nil {
-			t.OnError(fmt.Errorf("proxy error: %w", err))
-		}
-		w.WriteHeader(http.StatusBadGateway)
-		if _, writeErr := fmt.Fprintf(w, "Bad Gateway: %v", err); writeErr != nil && t.OnError != nil {
-			t.OnError(fmt.Errorf("failed to write proxy error response: %w", writeErr))
-		}
-	}
-
-	rw := &streamResponseWriter{
-		stream: stream,
-		header: make(http.Header),
-	}
-
-	proxy.ServeHTTP(rw, req)
-}
-
-func (t *TunnelConnection) handleWebSocketStream(stream net.Conn, req *http.Request, reader *bufio.Reader) {
 	dialer := &tls.Dialer{
-		Config: &tls.Config{
-			InsecureSkipVerify: true,
-		},
+		Config: &tls.Config{InsecureSkipVerify: true},
 	}
 
-	localConn, err := dialer.Dial("tcp", fmt.Sprintf("localhost:%s", t.LocalPort))
+	localConn, err := dialer.Dial("tcp", "localhost:"+t.LocalPort)
 	if err != nil {
-		if t.OnError != nil {
-			t.OnError(fmt.Errorf("failed to connect to local WebSocket server: %w", err))
-		}
-		t.writeBadGateway(stream)
+		log.Logger.Error().Err(err).Msg("Failed to dial local backend")
+		writeBadGateway(stream)
 		return
 	}
-	defer t.closeConn(localConn, "WebSocket session done")
-
-	if err := req.Write(localConn); err != nil {
-		if t.OnError != nil {
-			t.OnError(fmt.Errorf("failed to forward WebSocket request: %w", err))
-		}
-		t.writeBadGateway(stream)
-		return
-	}
-
-	localReader := bufio.NewReader(localConn)
-	resp, err := http.ReadResponse(localReader, req)
-	if err != nil {
-		if t.OnError != nil {
-			t.OnError(fmt.Errorf("failed to read WebSocket response: %w", err))
-		}
-		t.writeBadGateway(stream)
-		return
-	}
-
-	if err := resp.Write(stream); err != nil {
-		if t.OnError != nil {
-			t.OnError(fmt.Errorf("failed to forward WebSocket response: %w", err))
-		}
-		return
-	}
-
-	if resp.StatusCode == http.StatusSwitchingProtocols {
-		t.pumpWebSocket(stream, localConn, reader, localReader)
-	}
-}
-
-func (t *TunnelConnection) pumpWebSocket(stream net.Conn, localConn net.Conn, reader, localReader *bufio.Reader) {
-	// Drain any data buffered by the readers before starting the bidirectional
-	// pump — otherwise the first frame after the handshake can be dropped.
-	if reader.Buffered() > 0 {
-		if _, err := io.CopyN(localConn, reader, int64(reader.Buffered())); err != nil && t.OnError != nil {
-			t.OnError(fmt.Errorf("failed to flush buffered upstream data: %w", err))
-		}
-	}
-	if localReader.Buffered() > 0 {
-		if _, err := io.CopyN(stream, localReader, int64(localReader.Buffered())); err != nil && t.OnError != nil {
-			t.OnError(fmt.Errorf("failed to flush buffered downstream data: %w", err))
-		}
-	}
+	defer closeQuiet(localConn)
 
 	var wg sync.WaitGroup
 	wg.Add(2)
 
 	go func() {
 		defer wg.Done()
-		if _, err := io.Copy(localConn, stream); err != nil && !isBenignCloseError(err) && t.OnError != nil {
-			t.OnError(fmt.Errorf("WebSocket upstream copy ended: %w", err))
-		}
-		t.closeConn(localConn, "WebSocket upstream closed")
+		_, _ = io.Copy(localConn, stream)
+		closeWriteQuiet(localConn)
 	}()
 
 	go func() {
 		defer wg.Done()
-		if _, err := io.Copy(stream, localConn); err != nil && !isBenignCloseError(err) && t.OnError != nil {
-			t.OnError(fmt.Errorf("WebSocket downstream copy ended: %w", err))
-		}
-		t.closeStream(stream, "WebSocket downstream closed")
+		_, _ = io.Copy(stream, localConn)
+		closeWriteQuiet(stream)
 	}()
 
 	wg.Wait()
-}
-
-func (t *TunnelConnection) writeBadGateway(stream net.Conn) {
-	if _, err := stream.Write([]byte("HTTP/1.1 502 Bad Gateway\r\n\r\n")); err != nil && t.OnError != nil {
-		t.OnError(fmt.Errorf("failed to write 502 response: %w", err))
-	}
-}
-
-func (t *TunnelConnection) closeStream(stream net.Conn, reason string) {
-	if err := stream.Close(); err != nil && !isBenignCloseError(err) && t.OnError != nil {
-		t.OnError(fmt.Errorf("failed to close stream (%s): %w", reason, err))
-	}
-}
-
-func (t *TunnelConnection) closeConn(conn net.Conn, reason string) {
-	if err := conn.Close(); err != nil && !isBenignCloseError(err) && t.OnError != nil {
-		t.OnError(fmt.Errorf("failed to close connection (%s): %w", reason, err))
-	}
 }
 
 func (t *TunnelConnection) calculateHMAC(payload string) string {
@@ -550,25 +317,191 @@ func (t *TunnelConnection) disconnect(reason string) {
 		t.conn = nil
 	}
 
-	if t.OnDisconnected != nil {
-		t.OnDisconnected(reason)
+	log.Logger.Debug().Str("reason", reason).Msg("Tunnel disconnected")
+}
+
+func connectLoop(ctx context.Context) {
+	const (
+		baseBackoff = time.Second
+		maxBackoff  = 5 * time.Minute
+	)
+
+	backoff := baseBackoff
+
+	for {
+		if ctx.Err() != nil {
+			return
+		}
+
+		tunnel := NewTunnelConnection()
+		if old := swapCurrentTunnel(tunnel); old != nil {
+			old.Close()
+		}
+
+		err := tunnel.Connect()
+		if err != nil {
+			log.Logger.Warn().Err(err).Msg("Tunnel connect failed")
+
+			if errors.Is(err, ErrAuthFailed) {
+				log.Logger.Error().Msg("Authentication permanently failed — stopping reconnect loop")
+				if pubErr := proxy.GetClient().Publish(AuthFailedSubject, map[string]any{
+					"error": err.Error(),
+				}); pubErr != nil {
+					log.Logger.Error().Err(pubErr).Msg("Failed to publish auth-failed event")
+				}
+				return
+			}
+
+			if !sleepOrCancel(ctx, backoff) {
+				return
+			}
+			backoff = nextBackoff(backoff, maxBackoff)
+			continue
+		}
+
+		// Connected — reset backoff and signal up.
+		backoff = baseBackoff
+		log.Logger.Info().Msg("Tunnel connected")
+		if pubErr := proxy.GetClient().Publish(ConnectedSubject, map[string]any{
+			"connected_at": tunnel.ConnectedAt.UnixMilli(),
+		}); pubErr != nil {
+			log.Logger.Warn().Err(pubErr).Msg("Failed to publish connected event")
+		}
+
+		// Wait for disconnect, force-reconnect, or shutdown.
+		select {
+		case <-ctx.Done():
+			tunnel.Close()
+			return
+		case <-forceReconnectCh:
+			log.Logger.Info().Msg("Force-reconnect requested")
+			tunnel.Close()
+			// loop around immediately, no backoff
+		case <-tunnel.Done():
+			log.Logger.Info().Msg("Tunnel session ended")
+			// brief delay before reconnecting
+			if !sleepOrCancel(ctx, baseBackoff) {
+				return
+			}
+		}
 	}
 }
 
-// closeConnLog is a package-level helper for Connect()'s error paths where
-// no TunnelConnection.OnError callback is wired up yet. Distinct name from
-// the (*TunnelConnection).closeConn method to avoid the easy footgun of
-// thinking they're interchangeable.
+func sleepOrCancel(ctx context.Context, d time.Duration) bool {
+	select {
+	case <-ctx.Done():
+		return false
+	case <-forceReconnectCh:
+		return true
+	case <-time.After(d):
+		return true
+	}
+}
+
+func nextBackoff(current, max time.Duration) time.Duration {
+	next := min(current*2, max)
+	// ±20% jitter to avoid thundering herd if many agents reconnect together.
+	jitter := time.Duration(rand.Int63n(int64(next / 5)))
+	if rand.Intn(2) == 0 {
+		return next - jitter
+	}
+	return next + jitter
+}
+
+func handleStatus(msg *nats.Msg) {
+	t := getCurrentTunnel()
+	if t == nil || !t.IsConnected() {
+		respondSuccess(msg, map[string]any{"status": "disconnected"})
+		return
+	}
+	respondSuccess(msg, t.StatusSnapshot())
+}
+
+func handleShutdown(msg *nats.Msg) {
+	if loopCancel != nil {
+		loopCancel()
+	}
+	if old := swapCurrentTunnel(nil); old != nil {
+		old.Close()
+	}
+	respondSuccess(msg, map[string]any{"status": "shutdown"})
+}
+
+func handleForceReconnect(msg *nats.Msg) {
+	select {
+	case forceReconnectCh <- struct{}{}:
+	default:
+		// signal already queued
+	}
+	respondSuccess(msg, map[string]any{"status": "force-reconnect-queued"})
+}
+
+func respondSuccess(msg *nats.Msg, data any) {
+	client := proxy.GetClient()
+	if err := client.RespondSuccess(msg, data); err != nil {
+		log.Logger.Error().Err(err).Str("subject", msg.Subject).Msg("Failed to send success response")
+	}
+}
+
+func swapCurrentTunnel(next *TunnelConnection) *TunnelConnection {
+	currentTunnelMu.Lock()
+	defer currentTunnelMu.Unlock()
+	previous := currentTunnel
+	currentTunnel = next
+	return previous
+}
+
+func getCurrentTunnel() *TunnelConnection {
+	currentTunnelMu.Lock()
+	defer currentTunnelMu.Unlock()
+	return currentTunnel
+}
+
+func resolveAddress(endpoint string) (host, address string) {
+	if hostOnly, _, splitErr := net.SplitHostPort(endpoint); splitErr == nil {
+		return hostOnly, endpoint
+	}
+
+	if u, parseErr := url.Parse(endpoint); parseErr == nil && u.Scheme != "" && u.Host != "" {
+		host = u.Hostname()
+		port := u.Port()
+		if port == "" {
+			if u.Scheme == "https" {
+				port = "443"
+			} else {
+				port = "80"
+			}
+		}
+		return host, net.JoinHostPort(host, port)
+	}
+
+	return endpoint, net.JoinHostPort(endpoint, "9092")
+}
+
+func writeBadGateway(stream net.Conn) {
+	if _, err := stream.Write([]byte("HTTP/1.1 502 Bad Gateway\r\n\r\n")); err != nil && !isBenignCloseError(err) {
+		log.Logger.Warn().Err(err).Msg("Failed to write 502 response")
+	}
+}
+
 func closeConnLog(conn net.Conn, reason string) {
 	if err := conn.Close(); err != nil && !isBenignCloseError(err) {
 		log.Logger.Warn().Err(err).Str("reason", reason).Msg("Failed to close connection")
 	}
 }
 
-// isBenignCloseError reports whether err comes from closing an already-closed
-// connection — expected during the WebSocket pump teardown, where one
-// direction's close intentionally unblocks the other and the outer defer then
-// closes again.
+func closeQuiet(c net.Conn) {
+	if err := c.Close(); err != nil && !isBenignCloseError(err) {
+		log.Logger.Debug().Err(err).Msg("Close error")
+	}
+}
+
+func closeWriteQuiet(c net.Conn) {
+	if cw, ok := c.(interface{ CloseWrite() error }); ok {
+		_ = cw.CloseWrite()
+	}
+}
+
 func isBenignCloseError(err error) bool {
 	return errors.Is(err, net.ErrClosed)
 }

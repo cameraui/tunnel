@@ -10,14 +10,10 @@ import (
 )
 
 var (
-	// Version is the build version, set by main before Init runs.
 	Version string
-	// Info exposes runtime metadata (version, revision) for diagnostics.
-	Info = make(map[string]any)
+	Info    = make(map[string]any)
 )
 
-// Init validates required environment variables, loads config, and logs
-// startup metadata. Calls log.Fatal on missing environment variables.
 func Init() {
 	revision, vcsTime := readRevisionTime()
 
@@ -43,10 +39,13 @@ func Init() {
 
 func validateEnvironment() {
 	required := []string{
-		"PROXY_ENDPOINTS",
-		"PROXY_USER",
-		"PROXY_PASSWORD",
+		"SERVER_ID",
+		"SERVER_SECRET",
+		"CLOUD_ENDPOINT",
 		"LOCAL_PORT",
+		"NATS_ENDPOINTS",
+		"NATS_USER",
+		"NATS_PASSWORD",
 	}
 
 	var missing []string
@@ -69,10 +68,6 @@ func readRevisionTime() (revision, vcsTime string) {
 		return
 	}
 
-	// Two-pass: info.Settings iteration order isn't guaranteed, so collect
-	// revision and the modified flag separately, then apply the "mod." prefix.
-	// The previous single-pass version silently produced wrong dirty-build
-	// strings whenever vcs.modified came before vcs.revision.
 	var modified bool
 	for _, setting := range info.Settings {
 		switch setting.Key {

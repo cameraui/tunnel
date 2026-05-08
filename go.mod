@@ -5,7 +5,7 @@ go 1.25.0
 require (
 	github.com/hashicorp/yamux v0.1.2
 	github.com/mattn/go-isatty v0.0.22
-	github.com/nats-io/nats.go v1.51.0
+	github.com/nats-io/nats.go v1.52.0
 	github.com/rs/zerolog v1.35.1
 	github.com/vmihailenco/msgpack/v5 v5.4.1
 )

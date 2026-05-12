@@ -1,6 +1,6 @@
 {
   "name": "@camera.ui/cloud-client",
-  "version": "0.0.8",
+  "version": "0.0.9",
   "private": true,
   "description": "camera.ui cloud client",
   "type": "module",

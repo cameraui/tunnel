@@ -304,14 +304,14 @@ func (t *TunnelConnection) disconnect(reason string) {
 	t.connected.Store(false)
 
 	if t.session != nil {
-		if err := t.session.Close(); err != nil {
+		if err := t.session.Close(); err != nil && !isBenignCloseError(err) {
 			log.Logger.Warn().Err(err).Msg("Failed to close yamux session")
 		}
 		t.session = nil
 	}
 
 	if t.conn != nil {
-		if err := t.conn.Close(); err != nil {
+		if err := t.conn.Close(); err != nil && !isBenignCloseError(err) {
 			log.Logger.Warn().Err(err).Msg("Failed to close tunnel connection")
 		}
 		t.conn = nil

@@ -3,10 +3,10 @@ package tunnel
 import (
 	"bufio"
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
+	"crypto/ed25519"
 	"crypto/tls"
-	"encoding/hex"
+	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -28,10 +28,11 @@ import (
 )
 
 type TunnelConnection struct {
-	ServerID     string
-	ServerSecret string
-	Endpoint     string
-	LocalPort    string
+	ServerID  string
+	KeyID     string
+	PrivKey   ed25519.PrivateKey
+	Endpoint  string
+	LocalPort string
 
 	SessionID   string
 	conn        net.Conn
@@ -49,6 +50,7 @@ type NonceFrame struct {
 type AuthFrame struct {
 	Type      string `json:"type"`
 	ServerID  string `json:"server_id"`
+	KeyID     string `json:"key_id"`
 	SessionID string `json:"session_id"`
 	Signature string `json:"signature"`
 	Timestamp int64  `json:"timestamp"`
@@ -96,11 +98,16 @@ func Init() {
 
 func NewTunnelConnection() *TunnelConnection {
 	cfg := app.GetConfig()
+	priv, err := loadEd25519PrivKey(cfg.ServerPrivKey)
+	if err != nil {
+		log.Logger.Fatal().Err(err).Msg("agent: invalid SERVER_PRIV_KEY")
+	}
 	return &TunnelConnection{
-		ServerID:     cfg.ServerID,
-		ServerSecret: cfg.ServerSecret,
-		Endpoint:     cfg.CloudEndpoint,
-		LocalPort:    cfg.LocalPort,
+		ServerID:  cfg.ServerID,
+		KeyID:     cfg.ServerKeyID,
+		PrivKey:   priv,
+		Endpoint:  cfg.CloudEndpoint,
+		LocalPort: cfg.LocalPort,
 	}
 }
 
@@ -154,9 +161,10 @@ func (t *TunnelConnection) Connect() error {
 	auth := AuthFrame{
 		Type:      "AUTH",
 		ServerID:  t.ServerID,
+		KeyID:     t.KeyID,
 		SessionID: nf.SessionID,
 		Timestamp: timestamp,
-		Signature: t.calculateHMAC(payload),
+		Signature: base64.StdEncoding.EncodeToString(ed25519.Sign(t.PrivKey, []byte(payload))),
 	}
 
 	authJSON, err := json.Marshal(auth)
@@ -242,6 +250,22 @@ func (t *TunnelConnection) StatusSnapshot() map[string]any {
 	return result
 }
 
+func loadEd25519PrivKey(b64 string) (ed25519.PrivateKey, error) {
+	der, err := base64.StdEncoding.DecodeString(b64)
+	if err != nil {
+		return nil, fmt.Errorf("base64 decode: %w", err)
+	}
+	parsed, err := x509.ParsePKCS8PrivateKey(der)
+	if err != nil {
+		return nil, fmt.Errorf("parse PKCS#8: %w", err)
+	}
+	priv, ok := parsed.(ed25519.PrivateKey)
+	if !ok {
+		return nil, fmt.Errorf("expected Ed25519 key, got %T", parsed)
+	}
+	return priv, nil
+}
+
 func (t *TunnelConnection) acceptStreams(session *yamux.Session) {
 	defer t.disconnect("session closed")
 
@@ -285,12 +309,6 @@ func (t *TunnelConnection) handleStream(stream net.Conn) {
 	}()
 
 	wg.Wait()
-}
-
-func (t *TunnelConnection) calculateHMAC(payload string) string {
-	h := hmac.New(sha256.New, []byte(t.ServerSecret))
-	h.Write([]byte(payload))
-	return hex.EncodeToString(h.Sum(nil))
 }
 
 func (t *TunnelConnection) disconnect(reason string) {

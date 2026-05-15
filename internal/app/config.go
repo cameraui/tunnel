@@ -18,7 +18,8 @@ type Config struct {
 	NATSEndpoints []string
 
 	ServerID      string
-	ServerSecret  string
+	ServerPrivKey string
+	ServerKeyID   string
 	CloudEndpoint string
 	LocalPort     string
 }
@@ -42,7 +43,8 @@ func initConfig() {
 	globalCfg = Config{
 		Mode:          mode,
 		ServerID:      os.Getenv("SERVER_ID"),
-		ServerSecret:  os.Getenv("SERVER_SECRET"),
+		ServerPrivKey: os.Getenv("SERVER_PRIV_KEY"),
+		ServerKeyID:   os.Getenv("SERVER_KEY_ID"),
 		CloudEndpoint: os.Getenv("CLOUD_ENDPOINT"),
 		LocalPort:     os.Getenv("LOCAL_PORT"),
 		NATSUser:      os.Getenv("NATS_USER"),

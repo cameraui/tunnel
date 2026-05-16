@@ -281,11 +281,7 @@ func (t *TunnelConnection) acceptStreams(session *yamux.Session) {
 func (t *TunnelConnection) handleStream(stream net.Conn) {
 	defer closeQuiet(stream)
 
-	dialer := &tls.Dialer{
-		Config: &tls.Config{InsecureSkipVerify: true},
-	}
-
-	localConn, err := dialer.Dial("tcp", "localhost:"+t.LocalPort)
+	localConn, err := net.Dial("tcp", "127.0.0.1:"+t.LocalPort)
 	if err != nil {
 		log.Logger.Error().Err(err).Msg("Failed to dial local backend")
 		writeBadGateway(stream)

@@ -1,4 +1,4 @@
-module github.com/seydx/cameraui.com/cloud-client
+module github.com/seydx/cameraui.com/tunnel
 
 go 1.25.0
 

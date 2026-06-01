@@ -20,7 +20,7 @@ type Config struct {
 	ServerID      string
 	ServerPrivKey string
 	ServerKeyID   string
-	CloudEndpoint string
+	TunnelEndpoint string
 	LocalPort     string
 }
 
@@ -45,7 +45,7 @@ func initConfig() {
 		ServerID:      os.Getenv("SERVER_ID"),
 		ServerPrivKey: os.Getenv("SERVER_PRIV_KEY"),
 		ServerKeyID:   os.Getenv("SERVER_KEY_ID"),
-		CloudEndpoint: os.Getenv("CLOUD_ENDPOINT"),
+		TunnelEndpoint: os.Getenv("TUNNEL_ENDPOINT"),
 		LocalPort:     os.Getenv("LOCAL_PORT"),
 		NATSUser:      os.Getenv("NATS_USER"),
 		NATSPassword:  os.Getenv("NATS_PASSWORD"),

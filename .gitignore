@@ -1,9 +1,9 @@
 # Binary
-/cloud-client
-/cloud-client.exe
+/tunnel-client
+/tunnel-client.exe
 
-/cloud
-/cloud.exe
+/tunnel
+/tunnel.exe
 
 # Environment
 .env

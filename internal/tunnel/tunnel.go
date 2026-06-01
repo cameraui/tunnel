@@ -22,9 +22,9 @@ import (
 	"github.com/hashicorp/yamux"
 	"github.com/nats-io/nats.go"
 
-	"github.com/seydx/cameraui.com/cloud-client/internal/app"
-	"github.com/seydx/cameraui.com/cloud-client/internal/proxy"
-	"github.com/seydx/cameraui.com/cloud-client/pkg/log"
+	"github.com/seydx/cameraui.com/tunnel/internal/app"
+	"github.com/seydx/cameraui.com/tunnel/internal/proxy"
+	"github.com/seydx/cameraui.com/tunnel/pkg/log"
 )
 
 type TunnelConnection struct {
@@ -59,11 +59,11 @@ type AuthFrame struct {
 var ErrAuthFailed = errors.New("authentication failed")
 
 const (
-	StatusSubject         = "cloud.agent.status"
-	ShutdownSubject       = "cloud.agent.shutdown"
-	ForceReconnectSubject = "cloud.agent.force-reconnect"
-	AuthFailedSubject     = "cloud.agent.auth-failed"
-	ConnectedSubject      = "cloud.agent.connected"
+	StatusSubject         = "tunnel.agent.status"
+	ShutdownSubject       = "tunnel.agent.shutdown"
+	ForceReconnectSubject = "tunnel.agent.force-reconnect"
+	AuthFailedSubject     = "tunnel.agent.auth-failed"
+	ConnectedSubject      = "tunnel.agent.connected"
 )
 
 var (
@@ -106,7 +106,7 @@ func NewTunnelConnection() *TunnelConnection {
 		ServerID:  cfg.ServerID,
 		KeyID:     cfg.ServerKeyID,
 		PrivKey:   priv,
-		Endpoint:  cfg.CloudEndpoint,
+		Endpoint:  cfg.TunnelEndpoint,
 		LocalPort: cfg.LocalPort,
 	}
 }
@@ -135,7 +135,6 @@ func (t *TunnelConnection) Connect() error {
 
 	reader := bufio.NewReader(conn)
 
-	// Cloud sends nonce first.
 	nonceLine, err := reader.ReadString('\n')
 	if err != nil {
 		closeConnLog(conn, "nonce read failure")
@@ -149,7 +148,7 @@ func (t *TunnelConnection) Connect() error {
 	}
 	if nf.Nonce == "" || nf.SessionID == "" {
 		closeConnLog(conn, "nonce empty")
-		return errors.New("cloud sent empty nonce frame")
+		return errors.New("tunnel sent empty nonce frame")
 	}
 
 	t.SessionID = nf.SessionID

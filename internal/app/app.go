@@ -6,7 +6,7 @@ import (
 	"runtime"
 	"runtime/debug"
 
-	"github.com/seydx/cameraui.com/cloud-client/pkg/log"
+	"github.com/seydx/cameraui.com/tunnel/pkg/log"
 )
 
 var (
@@ -29,7 +29,7 @@ func Init() {
 		Str("version", Version).
 		Str("platform", platform).
 		Str("revision", revision).
-		Msg("camera.ui cloud")
+		Msg("camera.ui tunnel")
 
 	log.Logger.Debug().
 		Str("go_version", runtime.Version()).
@@ -42,7 +42,7 @@ func validateEnvironment() {
 		"SERVER_ID",
 		"SERVER_PRIV_KEY",
 		"SERVER_KEY_ID",
-		"CLOUD_ENDPOINT",
+		"TUNNEL_ENDPOINT",
 		"LOCAL_PORT",
 		"NATS_ENDPOINTS",
 		"NATS_USER",

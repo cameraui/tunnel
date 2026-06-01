@@ -1,6 +1,6 @@
-# @cameraui.com/cloud-client
+# @cameraui.com/tunnel
 
-The cloud-client enables secure tunnel connections between local camera.ui installations and the camera.ui cloud proxy service. It establishes outbound multiplexed connections to handle incoming requests when direct access is not available.
+The tunnel-client enables secure tunnel connections between local camera.ui installations and the camera.ui cloud proxy service.
 
 ---
 

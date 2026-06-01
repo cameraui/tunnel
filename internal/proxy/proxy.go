@@ -7,9 +7,9 @@ import (
 
 	"github.com/nats-io/nats.go"
 
-	"github.com/seydx/cameraui.com/cloud-client/internal/app"
-	"github.com/seydx/cameraui.com/cloud-client/internal/packer"
-	"github.com/seydx/cameraui.com/cloud-client/pkg/log"
+	"github.com/seydx/cameraui.com/tunnel/internal/app"
+	"github.com/seydx/cameraui.com/tunnel/internal/packer"
+	"github.com/seydx/cameraui.com/tunnel/pkg/log"
 )
 
 type Client struct {
@@ -187,7 +187,7 @@ func connect() (*Client, error) {
 	cfg := app.GetConfig()
 
 	opts := []nats.Option{
-		nats.Name("camera.ui cloud"),
+		nats.Name("camera.ui tunnel"),
 		nats.UserInfo(cfg.NATSUser, cfg.NATSPassword),
 		nats.ReconnectWait(2 * time.Second),
 		nats.MaxReconnects(-1),

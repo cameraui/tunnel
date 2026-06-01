@@ -1,8 +1,8 @@
 {
-  "name": "@camera.ui/cloud-client",
-  "version": "0.0.11",
+  "name": "@camera.ui/tunnel",
+  "version": "0.0.1",
   "private": true,
-  "description": "camera.ui cloud client",
+  "description": "camera.ui tunnel client",
   "type": "module",
   "scripts": {
     "update": "updates --update ./",
@@ -14,7 +14,9 @@
   },
   "keywords": [
     "camera.ui",
-    "cloud"
+    "tunnel",
+    "cloud",
+    "client"
   ],
   "author": "seydx",
   "license": "MIT",

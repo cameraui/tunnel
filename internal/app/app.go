@@ -6,7 +6,7 @@ import (
 	"runtime"
 	"runtime/debug"
 
-	"github.com/seydx/cameraui.com/tunnel/pkg/log"
+	"github.com/cameraui/tunnel/pkg/log"
 )
 
 var (

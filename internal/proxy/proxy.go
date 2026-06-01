@@ -7,9 +7,9 @@ import (
 
 	"github.com/nats-io/nats.go"
 
-	"github.com/seydx/cameraui.com/tunnel/internal/app"
-	"github.com/seydx/cameraui.com/tunnel/internal/packer"
-	"github.com/seydx/cameraui.com/tunnel/pkg/log"
+	"github.com/cameraui/tunnel/internal/app"
+	"github.com/cameraui/tunnel/internal/packer"
+	"github.com/cameraui/tunnel/pkg/log"
 )
 
 type Client struct {

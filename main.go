@@ -1,11 +1,11 @@
 package main
 
 import (
-	"github.com/seydx/cameraui.com/tunnel/internal/app"
-	"github.com/seydx/cameraui.com/tunnel/internal/proxy"
-	"github.com/seydx/cameraui.com/tunnel/internal/tunnel"
-	"github.com/seydx/cameraui.com/tunnel/pkg/log"
-	"github.com/seydx/cameraui.com/tunnel/pkg/shell"
+	"github.com/cameraui/tunnel/internal/app"
+	"github.com/cameraui/tunnel/internal/proxy"
+	"github.com/cameraui/tunnel/internal/tunnel"
+	"github.com/cameraui/tunnel/pkg/log"
+	"github.com/cameraui/tunnel/pkg/shell"
 )
 
 func main() {

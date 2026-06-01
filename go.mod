@@ -1,4 +1,4 @@
-module github.com/seydx/cameraui.com/tunnel
+module github.com/cameraui/tunnel
 
 go 1.25.0
 

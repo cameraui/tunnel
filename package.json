@@ -10,7 +10,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/seydx/camera.ui.git"
+    "url": "git+https://github.com/cameraui/tunnel.git"
   },
   "keywords": [
     "camera.ui",
@@ -21,9 +21,9 @@
   "author": "seydx",
   "license": "MIT",
   "bugs": {
-    "url": "https://github.com/seydx/camera.ui/issues"
+    "url": "https://github.com/cameraui/tunnel/issues"
   },
-  "homepage": "https://github.com/seydx/camera.ui#readme",
+  "homepage": "https://github.com/cameraui/tunnel#readme",
   "devDependencies": {
     "updates": "^17.17.3"
   }

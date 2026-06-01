@@ -22,9 +22,9 @@ import (
 	"github.com/hashicorp/yamux"
 	"github.com/nats-io/nats.go"
 
-	"github.com/seydx/cameraui.com/tunnel/internal/app"
-	"github.com/seydx/cameraui.com/tunnel/internal/proxy"
-	"github.com/seydx/cameraui.com/tunnel/pkg/log"
+	"github.com/cameraui/tunnel/internal/app"
+	"github.com/cameraui/tunnel/internal/proxy"
+	"github.com/cameraui/tunnel/pkg/log"
 )
 
 type TunnelConnection struct {

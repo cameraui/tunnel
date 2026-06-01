@@ -59,11 +59,11 @@ type AuthFrame struct {
 var ErrAuthFailed = errors.New("authentication failed")
 
 const (
-	StatusSubject         = "tunnel.agent.status"
-	ShutdownSubject       = "tunnel.agent.shutdown"
-	ForceReconnectSubject = "tunnel.agent.force-reconnect"
-	AuthFailedSubject     = "tunnel.agent.auth-failed"
-	ConnectedSubject      = "tunnel.agent.connected"
+	StatusSubject         = "tunnel.client.status"
+	ShutdownSubject       = "tunnel.client.shutdown"
+	ForceReconnectSubject = "tunnel.client.force-reconnect"
+	AuthFailedSubject     = "tunnel.client.auth-failed"
+	ConnectedSubject      = "tunnel.client.connected"
 )
 
 var (

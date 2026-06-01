@@ -25,6 +25,6 @@
   },
   "homepage": "https://github.com/seydx/camera.ui#readme",
   "devDependencies": {
-    "updates": "^17.17.2"
+    "updates": "^17.17.3"
   }
 }

@@ -17,11 +17,8 @@ type Config struct {
 	NATSPassword  string
 	NATSEndpoints []string
 
-	ServerID      string
-	ServerPrivKey string
-	ServerKeyID   string
 	TunnelEndpoint string
-	LocalPort     string
+	LocalPort      string
 }
 
 var globalCfg Config
@@ -41,14 +38,11 @@ func initConfig() {
 	}
 
 	globalCfg = Config{
-		Mode:          mode,
-		ServerID:      os.Getenv("SERVER_ID"),
-		ServerPrivKey: os.Getenv("SERVER_PRIV_KEY"),
-		ServerKeyID:   os.Getenv("SERVER_KEY_ID"),
+		Mode:           mode,
 		TunnelEndpoint: os.Getenv("TUNNEL_ENDPOINT"),
-		LocalPort:     os.Getenv("LOCAL_PORT"),
-		NATSUser:      os.Getenv("NATS_USER"),
-		NATSPassword:  os.Getenv("NATS_PASSWORD"),
-		NATSEndpoints: strings.Split(os.Getenv("NATS_ENDPOINTS"), ","),
+		LocalPort:      os.Getenv("LOCAL_PORT"),
+		NATSUser:       os.Getenv("NATS_USER"),
+		NATSPassword:   os.Getenv("NATS_PASSWORD"),
+		NATSEndpoints:  strings.Split(os.Getenv("NATS_ENDPOINTS"), ","),
 	}
 }

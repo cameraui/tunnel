@@ -3,15 +3,11 @@ package tunnel
 import (
 	"bufio"
 	"context"
-	"crypto/ed25519"
 	"crypto/tls"
-	"crypto/x509"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"math/rand"
 	"net"
 	"net/url"
 	"strings"
@@ -28,9 +24,6 @@ import (
 )
 
 type TunnelConnection struct {
-	ServerID  string
-	KeyID     string
-	PrivKey   ed25519.PrivateKey
 	Endpoint  string
 	LocalPort string
 
@@ -42,18 +35,17 @@ type TunnelConnection struct {
 	mu          sync.Mutex
 }
 
-type NonceFrame struct {
-	Nonce     string `json:"nonce"`
+type HelloFrame struct {
 	SessionID string `json:"session_id"`
 }
 
+const handshakeTimeout = 15 * time.Second
+const retryInterval = 10 * time.Second
+
 type AuthFrame struct {
-	Type      string `json:"type"`
-	ServerID  string `json:"server_id"`
-	KeyID     string `json:"key_id"`
-	SessionID string `json:"session_id"`
-	Signature string `json:"signature"`
-	Timestamp int64  `json:"timestamp"`
+	Type        string `json:"type"`
+	SessionID   string `json:"session_id"`
+	AccessToken string `json:"access_token"`
 }
 
 var ErrAuthFailed = errors.New("authentication failed")
@@ -64,6 +56,7 @@ const (
 	ForceReconnectSubject = "tunnel.client.force-reconnect"
 	AuthFailedSubject     = "tunnel.client.auth-failed"
 	ConnectedSubject      = "tunnel.client.connected"
+	CredentialsSubject    = "tunnel.server.credentials"
 )
 
 var (
@@ -98,14 +91,7 @@ func Init() {
 
 func NewTunnelConnection() *TunnelConnection {
 	cfg := app.GetConfig()
-	priv, err := loadEd25519PrivKey(cfg.ServerPrivKey)
-	if err != nil {
-		log.Logger.Fatal().Err(err).Msg("agent: invalid SERVER_PRIV_KEY")
-	}
 	return &TunnelConnection{
-		ServerID:  cfg.ServerID,
-		KeyID:     cfg.ServerKeyID,
-		PrivKey:   priv,
 		Endpoint:  cfg.TunnelEndpoint,
 		LocalPort: cfg.LocalPort,
 	}
@@ -114,6 +100,11 @@ func NewTunnelConnection() *TunnelConnection {
 func (t *TunnelConnection) Connect() error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+
+	token, err := t.requestAccessToken()
+	if err != nil {
+		return fmt.Errorf("failed to obtain access token: %w", err)
+	}
 
 	host, address := resolveAddress(t.Endpoint)
 
@@ -133,37 +124,35 @@ func (t *TunnelConnection) Connect() error {
 
 	t.conn = conn
 
+	if err := conn.SetDeadline(time.Now().Add(handshakeTimeout)); err != nil {
+		closeConnLog(conn, "set deadline failure")
+		return fmt.Errorf("failed to set handshake deadline: %w", err)
+	}
+
 	reader := bufio.NewReader(conn)
 
-	nonceLine, err := reader.ReadString('\n')
+	helloLine, err := reader.ReadString('\n')
 	if err != nil {
-		closeConnLog(conn, "nonce read failure")
-		return fmt.Errorf("failed to read nonce: %w", err)
+		closeConnLog(conn, "hello read failure")
+		return fmt.Errorf("failed to read hello frame: %w", err)
 	}
 
-	var nf NonceFrame
-	if err := json.Unmarshal([]byte(strings.TrimSpace(nonceLine)), &nf); err != nil {
-		closeConnLog(conn, "nonce decode failure")
-		return fmt.Errorf("failed to decode nonce: %w", err)
+	var hf HelloFrame
+	if err := json.Unmarshal([]byte(strings.TrimSpace(helloLine)), &hf); err != nil {
+		closeConnLog(conn, "hello decode failure")
+		return fmt.Errorf("failed to decode hello frame: %w", err)
 	}
-	if nf.Nonce == "" || nf.SessionID == "" {
-		closeConnLog(conn, "nonce empty")
-		return errors.New("tunnel sent empty nonce frame")
+	if hf.SessionID == "" {
+		closeConnLog(conn, "hello empty")
+		return errors.New("tunnel sent empty hello frame")
 	}
 
-	t.SessionID = nf.SessionID
-
-	// Sign nonce:sessionID:timestamp and respond.
-	timestamp := time.Now().Unix()
-	payload := fmt.Sprintf("%s:%s:%d", nf.Nonce, nf.SessionID, timestamp)
+	t.SessionID = hf.SessionID
 
 	auth := AuthFrame{
-		Type:      "AUTH",
-		ServerID:  t.ServerID,
-		KeyID:     t.KeyID,
-		SessionID: nf.SessionID,
-		Timestamp: timestamp,
-		Signature: base64.StdEncoding.EncodeToString(ed25519.Sign(t.PrivKey, []byte(payload))),
+		Type:        "AUTH",
+		SessionID:   hf.SessionID,
+		AccessToken: token,
 	}
 
 	authJSON, err := json.Marshal(auth)
@@ -190,6 +179,11 @@ func (t *TunnelConnection) Connect() error {
 			return fmt.Errorf("%w: %s", ErrAuthFailed, response)
 		}
 		return fmt.Errorf("authentication failed: %s", response)
+	}
+
+	if err := conn.SetDeadline(time.Time{}); err != nil {
+		closeConnLog(conn, "clear deadline failure")
+		return fmt.Errorf("failed to clear handshake deadline: %w", err)
 	}
 
 	yamuxConfig := yamux.DefaultConfig()
@@ -248,21 +242,20 @@ func (t *TunnelConnection) StatusSnapshot() map[string]any {
 
 	return result
 }
-
-func loadEd25519PrivKey(b64 string) (ed25519.PrivateKey, error) {
-	der, err := base64.StdEncoding.DecodeString(b64)
+func (t *TunnelConnection) requestAccessToken() (string, error) {
+	client := proxy.GetClient()
+	if client == nil {
+		return "", errors.New("nats client not initialized")
+	}
+	resp, err := client.Request(CredentialsSubject, struct{}{}, 10*time.Second)
 	if err != nil {
-		return nil, fmt.Errorf("base64 decode: %w", err)
+		return "", fmt.Errorf("request tunnel credentials: %w", err)
 	}
-	parsed, err := x509.ParsePKCS8PrivateKey(der)
-	if err != nil {
-		return nil, fmt.Errorf("parse PKCS#8: %w", err)
+	token, ok := resp.Data.(string)
+	if !ok || token == "" {
+		return "", errors.New("server returned no access token")
 	}
-	priv, ok := parsed.(ed25519.PrivateKey)
-	if !ok {
-		return nil, fmt.Errorf("expected Ed25519 key, got %T", parsed)
-	}
-	return priv, nil
+	return token, nil
 }
 
 func (t *TunnelConnection) acceptStreams(session *yamux.Session) {
@@ -334,12 +327,7 @@ func (t *TunnelConnection) disconnect(reason string) {
 }
 
 func connectLoop(ctx context.Context) {
-	const (
-		baseBackoff = time.Second
-		maxBackoff  = 5 * time.Minute
-	)
-
-	backoff := baseBackoff
+	attempt := 0
 
 	for {
 		if ctx.Err() != nil {
@@ -351,37 +339,39 @@ func connectLoop(ctx context.Context) {
 			old.Close()
 		}
 
-		err := tunnel.Connect()
-		if err != nil {
-			log.Logger.Warn().Err(err).Msg("Tunnel connect failed")
+		if err := tunnel.Connect(); err != nil {
+			attempt++
+			log.Logger.Info().Err(err).Int("attempt", attempt).Dur("retry_in", retryInterval).Msg("Tunnel connect failed — retrying")
 
 			if errors.Is(err, ErrAuthFailed) {
-				log.Logger.Error().Msg("Authentication permanently failed — stopping reconnect loop")
 				if pubErr := proxy.GetClient().Publish(AuthFailedSubject, map[string]any{
 					"error": err.Error(),
 				}); pubErr != nil {
 					log.Logger.Error().Err(pubErr).Msg("Failed to publish auth-failed event")
 				}
-				return
 			}
 
-			if !sleepOrCancel(ctx, backoff) {
+			if !sleepOrCancel(ctx, retryInterval) {
 				return
 			}
-			backoff = nextBackoff(backoff, maxBackoff)
 			continue
 		}
 
-		// Connected — reset backoff and signal up.
-		backoff = baseBackoff
-		log.Logger.Info().Msg("Tunnel connected")
+		if attempt > 0 {
+			log.Logger.Info().Int("attempts", attempt).Msg("Tunnel reconnected")
+		} else {
+			log.Logger.Info().Msg("Tunnel connected")
+		}
+		attempt = 0
+
 		if pubErr := proxy.GetClient().Publish(ConnectedSubject, map[string]any{
 			"connected_at": tunnel.ConnectedAt.UnixMilli(),
 		}); pubErr != nil {
 			log.Logger.Warn().Err(pubErr).Msg("Failed to publish connected event")
 		}
 
-		// Wait for disconnect, force-reconnect, or shutdown.
+		// Wait for disconnect, force-reconnect, or shutdown. A drop loops straight
+		// back to a fresh connect attempt; only an actual failure then waits.
 		select {
 		case <-ctx.Done():
 			tunnel.Close()
@@ -389,13 +379,8 @@ func connectLoop(ctx context.Context) {
 		case <-forceReconnectCh:
 			log.Logger.Info().Msg("Force-reconnect requested")
 			tunnel.Close()
-			// loop around immediately, no backoff
 		case <-tunnel.Done():
-			log.Logger.Info().Msg("Tunnel session ended")
-			// brief delay before reconnecting
-			if !sleepOrCancel(ctx, baseBackoff) {
-				return
-			}
+			log.Logger.Info().Msg("Tunnel session ended — reconnecting")
 		}
 	}
 }
@@ -409,16 +394,6 @@ func sleepOrCancel(ctx context.Context, d time.Duration) bool {
 	case <-time.After(d):
 		return true
 	}
-}
-
-func nextBackoff(current, max time.Duration) time.Duration {
-	next := min(current*2, max)
-	// ±20% jitter to avoid thundering herd if many agents reconnect together.
-	jitter := time.Duration(rand.Int63n(int64(next / 5)))
-	if rand.Intn(2) == 0 {
-		return next - jitter
-	}
-	return next + jitter
 }
 
 func handleStatus(msg *nats.Msg) {

@@ -39,9 +39,6 @@ func Init() {
 
 func validateEnvironment() {
 	required := []string{
-		"SERVER_ID",
-		"SERVER_PRIV_KEY",
-		"SERVER_KEY_ID",
 		"TUNNEL_ENDPOINT",
 		"LOCAL_PORT",
 		"NATS_ENDPOINTS",

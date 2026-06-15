@@ -10,7 +10,7 @@ import (
 )
 
 var (
-	Version string
+	Version = "dev"
 	Info    = make(map[string]any)
 )
 

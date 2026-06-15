@@ -1,7 +1,9 @@
 name: Release
 
 on:
-  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
 
 jobs:
   build-binaries:
@@ -16,93 +18,96 @@ jobs:
         uses: actions/setup-go@v6
         with: { go-version: "1.25" }
 
+      - name: Resolve version from tag
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+
       - name: Build cloud_win64
         env: { GOOS: windows, GOARCH: amd64 }
-        run: go build -ldflags "-s -w" -trimpath -o tunnel.exe
+        run: go build -ldflags "-s -w -X github.com/cameraui/tunnel/internal/app.Version=$VERSION" -trimpath -o tunnel.exe
       - name: Upload cloud_win64
         uses: actions/upload-artifact@v7
         with: { name: cloud_win64, path: tunnel.exe }
 
       - name: Build cloud_win32
         env: { GOOS: windows, GOARCH: 386 }
-        run: go build -ldflags "-s -w" -trimpath -o tunnel.exe
+        run: go build -ldflags "-s -w -X github.com/cameraui/tunnel/internal/app.Version=$VERSION" -trimpath -o tunnel.exe
       - name: Upload cloud_win32
         uses: actions/upload-artifact@v7
         with: { name: cloud_win32, path: tunnel.exe }
 
       - name: Build cloud_win_arm64
         env: { GOOS: windows, GOARCH: arm64 }
-        run: go build -ldflags "-s -w" -trimpath -o tunnel.exe
+        run: go build -ldflags "-s -w -X github.com/cameraui/tunnel/internal/app.Version=$VERSION" -trimpath -o tunnel.exe
       - name: Upload cloud_win_arm64
         uses: actions/upload-artifact@v7
         with: { name: cloud_win_arm64, path: tunnel.exe }
 
       - name: Build cloud_linux_amd64
         env: { GOOS: linux, GOARCH: amd64 }
-        run: go build -ldflags "-s -w" -trimpath -o tunnel
+        run: go build -ldflags "-s -w -X github.com/cameraui/tunnel/internal/app.Version=$VERSION" -trimpath -o tunnel
       - name: Upload cloud_linux_amd64
         uses: actions/upload-artifact@v7
         with: { name: cloud_linux_amd64, path: tunnel }
 
       - name: Build cloud_linux_i386
         env: { GOOS: linux, GOARCH: 386 }
-        run: go build -ldflags "-s -w" -trimpath -o tunnel
+        run: go build -ldflags "-s -w -X github.com/cameraui/tunnel/internal/app.Version=$VERSION" -trimpath -o tunnel
       - name: Upload cloud_linux_i386
         uses: actions/upload-artifact@v7
         with: { name: cloud_linux_i386, path: tunnel }
 
       - name: Build cloud_linux_arm64
         env: { GOOS: linux, GOARCH: arm64 }
-        run: go build -ldflags "-s -w" -trimpath -o tunnel
+        run: go build -ldflags "-s -w -X github.com/cameraui/tunnel/internal/app.Version=$VERSION" -trimpath -o tunnel
       - name: Upload cloud_linux_arm64
         uses: actions/upload-artifact@v7
         with: { name: cloud_linux_arm64, path: tunnel }
 
       - name: Build cloud_linux_arm
         env: { GOOS: linux, GOARCH: arm, GOARM: 7 }
-        run: go build -ldflags "-s -w" -trimpath -o tunnel
+        run: go build -ldflags "-s -w -X github.com/cameraui/tunnel/internal/app.Version=$VERSION" -trimpath -o tunnel
       - name: Upload cloud_linux_arm
         uses: actions/upload-artifact@v7
         with: { name: cloud_linux_arm, path: tunnel }
 
       - name: Build cloud_linux_armv6
         env: { GOOS: linux, GOARCH: arm, GOARM: 6 }
-        run: go build -ldflags "-s -w" -trimpath -o tunnel
+        run: go build -ldflags "-s -w -X github.com/cameraui/tunnel/internal/app.Version=$VERSION" -trimpath -o tunnel
       - name: Upload cloud_linux_armv6
         uses: actions/upload-artifact@v7
         with: { name: cloud_linux_armv6, path: tunnel }
 
       - name: Build cloud_linux_mipsel
         env: { GOOS: linux, GOARCH: mipsle }
-        run: go build -ldflags "-s -w" -trimpath -o tunnel
+        run: go build -ldflags "-s -w -X github.com/cameraui/tunnel/internal/app.Version=$VERSION" -trimpath -o tunnel
       - name: Upload cloud_linux_mipsel
         uses: actions/upload-artifact@v7
         with: { name: cloud_linux_mipsel, path: tunnel }
 
       - name: Build cloud_mac_amd64
         env: { GOOS: darwin, GOARCH: amd64 }
-        run: go build -ldflags "-s -w" -trimpath -o tunnel
+        run: go build -ldflags "-s -w -X github.com/cameraui/tunnel/internal/app.Version=$VERSION" -trimpath -o tunnel
       - name: Upload cloud_mac_amd64
         uses: actions/upload-artifact@v7
         with: { name: cloud_mac_amd64, path: tunnel }
 
       - name: Build cloud_mac_arm64
         env: { GOOS: darwin, GOARCH: arm64 }
-        run: go build -ldflags "-s -w" -trimpath -o tunnel
+        run: go build -ldflags "-s -w -X github.com/cameraui/tunnel/internal/app.Version=$VERSION" -trimpath -o tunnel
       - name: Upload cloud_mac_arm64
         uses: actions/upload-artifact@v7
         with: { name: cloud_mac_arm64, path: tunnel }
 
       - name: Build cloud_freebsd_amd64
         env: { GOOS: freebsd, GOARCH: amd64 }
-        run: go build -ldflags "-s -w" -trimpath -o tunnel
+        run: go build -ldflags "-s -w -X github.com/cameraui/tunnel/internal/app.Version=$VERSION" -trimpath -o tunnel
       - name: Upload cloud_freebsd_amd64
         uses: actions/upload-artifact@v7
         with: { name: cloud_freebsd_amd64, path: tunnel }
 
       - name: Build cloud_freebsd_arm64
         env: { GOOS: freebsd, GOARCH: arm64 }
-        run: go build -ldflags "-s -w" -trimpath -o tunnel
+        run: go build -ldflags "-s -w -X github.com/cameraui/tunnel/internal/app.Version=$VERSION" -trimpath -o tunnel
       - name: Upload cloud_freebsd_arm64
         uses: actions/upload-artifact@v7
         with: { name: cloud_freebsd_arm64, path: tunnel }
@@ -122,9 +127,8 @@ jobs:
         with:
           path: artifacts
 
-      - name: Get version from package.json
-        id: package-version
-        uses: martinbeentjes/npm-get-version-action@v1.3.1
+      - name: Resolve version from tag
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
 
       - name: Create ZIP files with specific naming scheme
         run: |
@@ -175,7 +179,7 @@ jobs:
               cd "$dir"
               
               # Prepare the filename: tunnel-darwin-x64-1.9.9.zip
-              zip_filename="tunnel-${os_arch}-${{ steps.package-version.outputs.current-version }}.zip"
+              zip_filename="tunnel-${os_arch}-${VERSION}.zip"
               
               # Create the zip with the correct internal filename (just "tunnel" or "tunnel.exe")
               if [[ $os_arch == windows* ]]; then
@@ -198,5 +202,5 @@ jobs:
           files: release/*.zip
           draft: false
           prerelease: false
-          tag_name: v${{ steps.package-version.outputs.current-version }}
-          name: Release v${{ steps.package-version.outputs.current-version }}
+          tag_name: ${{ github.ref_name }}
+          name: Release ${{ github.ref_name }}

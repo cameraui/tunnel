@@ -9,8 +9,6 @@ import (
 )
 
 func main() {
-	app.Version = "1.0.2"
-
 	log.Init()
 	app.Init()
 	proxy.Init()

@@ -5,6 +5,10 @@
   "description": "camera.ui tunnel client",
   "type": "module",
   "scripts": {
+    "lint": "gofmt -w . && golangci-lint run ./...",
+    "build": "go build -o tunnel .",
+    "test": "go test ./...",
+    "release": "bash scripts/release.sh",
     "update": "updates --update ./",
     "install-updates": "npm i --save"
   },

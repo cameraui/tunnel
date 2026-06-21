@@ -1,4 +1,4 @@
-# camera.ui Tunnel
+# cameraui/tunnel
 
 [![Release](https://img.shields.io/github/v/release/cameraui/tunnel?logo=github&label=release)](https://github.com/cameraui/tunnel/releases/latest)
 [![License](https://img.shields.io/github/license/cameraui/tunnel)](LICENSE)

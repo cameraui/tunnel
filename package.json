@@ -30,6 +30,6 @@
   },
   "homepage": "https://github.com/cameraui/tunnel#readme",
   "devDependencies": {
-    "updates": "^17.18.0"
+    "updates": "^17.18.1"
   }
 }

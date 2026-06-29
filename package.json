@@ -7,8 +7,9 @@
   "scripts": {
     "audit": "npm audit fix",
     "build": "go build -o tunnel .",
+    "format": "gofmt -w . && go fix ./...",
     "install-updates": "npm i --save",
-    "lint": "gofmt -w . && golangci-lint run ./...",
+    "lint": "staticcheck ./... && golangci-lint run ./...",
     "release": "bash scripts/release.sh",
     "test": "go test ./...",
     "update": "updates --update ./"

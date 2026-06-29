@@ -8,6 +8,9 @@ updates:
     directory: "/"
     schedule:
       interval: daily
+    ignore:
+      - dependency-name: "eslint"
+      - dependency-name: "typescript"
   - package-ecosystem: gomod
     directory: "/"
     schedule:

@@ -1,6 +1,8 @@
 package main
 
 import (
+	_ "golang.org/x/crypto/x509roots/fallback"
+
 	"github.com/cameraui/tunnel/internal/app"
 	"github.com/cameraui/tunnel/internal/proxy"
 	"github.com/cameraui/tunnel/internal/tunnel"

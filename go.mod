@@ -8,7 +8,7 @@ require (
 	github.com/nats-io/nats.go v1.54.0
 	github.com/rs/zerolog v1.35.1
 	github.com/vmihailenco/msgpack/v5 v5.4.1
-	golang.org/x/crypto/x509roots/fallback v0.0.0-20261014201258-cf169cd0986f
+	golang.org/x/crypto/x509roots/fallback v0.0.0-20261016151342-0ae6809b7559
 )
 
 require (

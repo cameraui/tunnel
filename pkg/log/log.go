@@ -38,10 +38,8 @@ func Init() {
 			case "text":
 				console.NoColor = true
 			case "color":
-				console.NoColor = false // useless, but anyway
+				console.NoColor = false
 			default:
-				// autodetection if output support color
-				// go-isatty - dependency for go-colorable - dependency for ConsoleWriter
 				console.NoColor = !isatty.IsTerminal(writer.(*os.File).Fd())
 			}
 
@@ -72,7 +70,6 @@ func Init() {
 
 var Logger zerolog.Logger
 
-// modules log levels
 var modules = map[string]string{
 	"format": "",
 	"level":  "trace",

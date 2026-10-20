@@ -44,8 +44,7 @@ func (c *Client) RegisterHandler(subject string, handler nats.MsgHandler) error 
 		return fmt.Errorf("failed to subscribe to %s: %w", subject, err)
 	}
 
-	// Allow unlimited pending messages — long-lived tunnel handlers shouldn't
-	// be capped by NATS' default 64k queue.
+	// no pending limit, long-lived tunnel handlers must not hit the default 64k queue
 	if err := sub.SetPendingLimits(-1, -1); err != nil {
 		return fmt.Errorf("failed to set pending limits for %s: %w", subject, err)
 	}

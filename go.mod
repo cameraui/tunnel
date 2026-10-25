@@ -5,7 +5,7 @@ go 1.27.0
 require (
 	github.com/hashicorp/yamux v0.1.2
 	github.com/mattn/go-isatty v0.0.24
-	github.com/nats-io/nats.go v1.54.0
+	github.com/nats-io/nats.go v1.55.0
 	github.com/rs/zerolog v1.35.1
 	github.com/vmihailenco/msgpack/v5 v5.4.1
 	golang.org/x/crypto/x509roots/fallback v0.0.0-20261020153306-9f2b28d4331a

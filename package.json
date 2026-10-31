@@ -12,7 +12,7 @@
     "lint": "staticcheck ./... && golangci-lint run ./...",
     "release": "bash scripts/release.sh",
     "test": "go test ./...",
-    "update": "updates -M npm,pypi,go,cargo,docker,make --update ./"
+    "update": "updates -M npm,pypi,go,cargo,docker --update ./"
   },
   "repository": {
     "type": "git",

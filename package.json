@@ -5,7 +5,7 @@
   "description": "camera.ui tunnel client",
   "type": "module",
   "scripts": {
-    "audit": "npm audit fix",
+    "audit": "npm audit fix --min-release-age=0",
     "build": "go build -o tunnel .",
     "format": "gofmt -w . && go fix ./...",
     "install-updates": "npm i --save && go mod tidy",

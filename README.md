@@ -3,7 +3,7 @@
 [![Release](https://img.shields.io/github/v/release/cameraui/tunnel?logo=github&label=release)](https://github.com/cameraui/tunnel/releases/latest)
 [![License](https://img.shields.io/github/license/cameraui/tunnel)](LICENSE)
 
-The tunnel-client enables secure tunnel connections between local camera.ui installations and the camera.ui cloud proxy service.
+The tunnel client connects a local camera.ui server to the camera.ui cloud. The server ships it as the npm package [`@camera.ui/tunnel`](https://www.npmjs.com/package/@camera.ui/tunnel).
 
 ---
 
